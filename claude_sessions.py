@@ -164,11 +164,18 @@ def print_session(meta: dict, verbose: bool = False):
     first = meta["first_user_msg"] or ""
 
     name  = meta["name"]
+    # Title shown by claude --resume: name > summary > first user message
+    if meta["summary"]:
+        title = meta["summary"]
+    elif first:
+        title = first.replace("\n", " ")
+    else:
+        title = DIM + "(no title)" + RESET
 
     title_parts = [f"{CYAN}{BOLD}{short}…{RESET}"]
     if name:
         title_parts.append(f"{YELLOW}{BOLD}{name}{RESET}")
-    title_parts.append(f"{GREEN}{summary}{RESET}")
+    title_parts.append(f"{GREEN}{title}{RESET}")
     print("  " + "  ".join(title_parts))
     print(f"  {DIM}id   :{RESET} {sid}")
     print(f"  {DIM}slug :{RESET} {slug}   {DIM}date:{RESET} {ts}   {DIM}size:{RESET} {size} KB")
