@@ -76,6 +76,7 @@ def parse_session(jsonl_path: Path) -> dict:
     meta = {
         "id": jsonl_path.stem,
         "path": jsonl_path,
+        "name": None,
         "summary": None,
         "slug": None,
         "cwd": None,
@@ -97,6 +98,9 @@ def parse_session(jsonl_path: Path) -> dict:
             continue
 
         t = entry.get("type")
+
+        if t == "custom-title":
+            meta["name"] = entry.get("customTitle")
 
         if t == "summary" and meta["summary"] is None:
             meta["summary"] = entry.get("summary")
@@ -122,8 +126,9 @@ def parse_session(jsonl_path: Path) -> dict:
                 elif isinstance(content, str):
                     meta["first_user_msg"] = content[:120]
 
-        # Stop early if we have everything
-        if all([meta["summary"], meta["slug"], meta["first_user_msg"]]):
+        # Stop early if we have everything (don't stop for name — it may
+        # appear anywhere in the file since /rename can happen at any time)
+        if all([meta["summary"], meta["slug"], meta["first_user_msg"], meta["name"]]):
             break
 
     return meta
@@ -158,7 +163,13 @@ def print_session(meta: dict, verbose: bool = False):
     size  = meta["size_kb"]
     first = meta["first_user_msg"] or ""
 
-    print(f"  {CYAN}{BOLD}{short}…{RESET}  {GREEN}{summary}{RESET}")
+    name  = meta["name"]
+
+    title_parts = [f"{CYAN}{BOLD}{short}…{RESET}"]
+    if name:
+        title_parts.append(f"{YELLOW}{BOLD}{name}{RESET}")
+    title_parts.append(f"{GREEN}{summary}{RESET}")
+    print("  " + "  ".join(title_parts))
     print(f"  {DIM}id   :{RESET} {sid}")
     print(f"  {DIM}slug :{RESET} {slug}   {DIM}date:{RESET} {ts}   {DIM}size:{RESET} {size} KB")
     if verbose and cwd:
