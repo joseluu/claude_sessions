@@ -7,11 +7,13 @@ Usage:
   python3 claude_sessions.py move <SESSION_ID> <TARGET_DIR> [--copy]
   python3 claude_sessions.py link <TARGET_DIR>   # link current dir's sessions to TARGET_DIR
   python3 claude_sessions.py remove <HANDLE> [--project PATH] [--force]
+  python3 claude_sessions.py search <WORDS>... [--project PATH]
 """
 
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -425,6 +427,116 @@ def cmd_remove(args):
 
 
 # ---------------------------------------------------------------------------
+# Search command
+# ---------------------------------------------------------------------------
+
+def search_session(jsonl_path: Path, words: "list[str]") -> "list[str]":
+    """Return matching user prompt snippets from a session JSONL.
+
+    All words must appear (case-insensitive) in a single user message for it
+    to count as a match.  Returns a list of matching snippets (truncated).
+    """
+    matches = []
+    lower_words = [w.lower() for w in words]
+
+    try:
+        with jsonl_path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if entry.get("type") != "user":
+                    continue
+                msg = entry.get("message", {})
+                if msg.get("role") != "user":
+                    continue
+
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text = " ".join(
+                        b.get("text", "") for b in content
+                        if b.get("type") == "text"
+                    )
+                elif isinstance(content, str):
+                    text = content
+                else:
+                    continue
+
+                text_lower = text.lower()
+                if all(w in text_lower for w in lower_words):
+                    snippet = text.replace("\n", " ")[:150]
+                    matches.append(snippet)
+    except OSError:
+        pass
+    return matches
+
+
+def cmd_search(args):
+    words = args.words
+    project_filter = args.project
+
+    if project_filter:
+        key = resolve_project_key(project_filter)
+        project_dirs = [CLAUDE_PROJECTS / key]
+    else:
+        project_dirs = sorted(CLAUDE_PROJECTS.iterdir())
+
+    # Deduplicate sessions by UUID (same session may appear in multiple projects)
+    seen_ids = set()
+    total_matches = 0
+
+    for proj_dir in project_dirs:
+        if not proj_dir.is_dir():
+            continue
+
+        proj_hits = []
+        for jsonl in sorted(
+            proj_dir.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            if jsonl.stem in seen_ids:
+                continue
+
+            matches = search_session(jsonl, words)
+            if matches:
+                seen_ids.add(jsonl.stem)
+                meta = parse_session(jsonl)
+                proj_hits.append((meta, matches))
+
+        if not proj_hits:
+            continue
+
+        real_path = key_to_path(proj_dir.name)
+        print(f"\n{BOLD}{BLUE}{real_path}{RESET}  {DIM}({proj_dir.name}){RESET}")
+
+        for meta, matches in proj_hits:
+            total_matches += 1
+            print_session(meta)
+            for snippet in matches[:3]:
+                # Highlight matching words
+                highlighted = snippet
+                for w in words:
+                    highlighted = re.sub(
+                        re.escape(w),
+                        f"{RED}{BOLD}" + w + f"{RESET}",
+                        highlighted,
+                        flags=re.IGNORECASE,
+                    )
+                print(f"  {DIM}match:{RESET} {highlighted}")
+            if len(matches) > 3:
+                print(f"  {DIM}… and {len(matches) - 3} more match(es){RESET}")
+            print()
+
+    if total_matches == 0:
+        print(YELLOW + f"No sessions match: {' '.join(words)}" + RESET)
+    else:
+        print(f"{GREEN}{total_matches} session(s) matched.{RESET}")
+
+
+# ---------------------------------------------------------------------------
 # Link: copy all sessions from cwd project to another project
 # ---------------------------------------------------------------------------
 
@@ -483,6 +595,8 @@ Examples:
   %(prog)s remove 0242fe79 --force                # remove without confirmation
   %(prog)s remove 0242fe79 --project ~/some/dir   # remove only that project's association
   %(prog)s remove a969122a                        # remove a subagent file (always safe)
+  %(prog)s search pepper wifi                     # find sessions mentioning pepper and wifi
+  %(prog)s search obsidian --project ~/hobby_l    # search within one project
         """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -524,6 +638,20 @@ Examples:
         help="Skip confirmation when removing the last copy of a session",
     )
 
+    # search
+    p_search = sub.add_parser(
+        "search",
+        help="Search user prompts across all sessions for matching words",
+    )
+    p_search.add_argument(
+        "words", nargs="+",
+        help="Words to search for (all must appear in the same prompt)",
+    )
+    p_search.add_argument(
+        "--project", metavar="PATH",
+        help="Restrict search to sessions in this project directory",
+    )
+
     args = parser.parse_args()
 
     if args.command == "list":
@@ -534,6 +662,8 @@ Examples:
         cmd_link(args)
     elif args.command == "remove":
         cmd_remove(args)
+    elif args.command == "search":
+        cmd_search(args)
 
 
 if __name__ == "__main__":
