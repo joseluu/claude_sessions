@@ -37,18 +37,37 @@ BLUE   = "\033[34m"
 
 def path_to_key(path: str) -> str:
     """Encode a filesystem path to a Claude projects directory name.
-    /home/jluu/hobby_l/robot/pepper  ->  -home-jluu-hobby-l-robot-pepper
-    Slashes and underscores both become hyphens.
+
+    Linux:   /home/jluu/hobby_l/robot/pepper  ->  -home-jluu-hobby-l-robot-pepper
+    Windows: C:\\Users\\josel\\hobby_w          ->  C--Users-josel-hobby-w
+
+    Every separator (/ \\ : _) becomes a hyphen.
     """
-    return path.replace("/", "-").replace("_", "-")
+    return (
+        path
+        .replace("\\", "-")
+        .replace("/", "-")
+        .replace(":", "-")
+        .replace("_", "-")
+    )
 
 
 def key_to_path(key: str) -> str:
     """Decode a project directory name back to a best-guess filesystem path.
+
     -home-jluu-hobby-l-robot-pepper  ->  /home/jluu/hobby-l/robot/pepper
-    Note: underscores are lost in encoding; we return the hyphen form.
+    C--Users-josel-hobby-w           ->  C:/Users/josel/hobby-w
+
+    Note: underscores are lost in encoding; the reverse mapping is lossy.
     """
-    return key.replace("-", "/", 1)  # first leading '-' becomes the leading '/'
+    # The encoding is lossy (- / \ _ : all become -), so decoding is
+    # best-effort for display only.  We just restore the leading structure.
+    # Windows-style key: starts with a drive letter (e.g. C--Users-...)
+    if len(key) >= 3 and key[0].isalpha() and key[1:3] == "--":
+        # C--Users-josel -> C: / Users-josel  (keep hyphens; ambiguous)
+        return key[0] + ":\\" + key[3:]
+    # Unix-style key: starts with - (e.g. -home-jluu-...)
+    return "/" + key[1:]
 
 
 def find_project_key(real_path: str) -> "str | None":
